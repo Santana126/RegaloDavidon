@@ -107,11 +107,9 @@
     .modal-kicker { color: var(--gold); font-size: .68rem; letter-spacing: .2em; text-transform: uppercase; }
     .modal h2 { margin: 8px 0 9px; font: 600 2rem/1.15 var(--serif); }
     .modal-message { max-width: 350px; margin: 0 auto; color: var(--muted); font-size: .9rem; line-height: 1.55; white-space: pre-line; }
-    .coordinates { display: grid; gap: 9px; margin: 21px 0 18px; }
-    .coordinate-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid rgba(244,201,107,.2); border-radius: 12px; padding: 12px 14px; background: rgba(244,201,107,.045); }
-    .coordinate-line span { color: #9ba8be; font-size: .68rem; text-transform: uppercase; letter-spacing: .1em; }
-    .coordinate-line strong { color: #f8df9d; font: 600 1.06rem var(--serif); letter-spacing: .035em; }
-    .modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    .secret-sequence { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 21px 0 18px; }
+    .sequence-pair { display: grid; place-items: center; min-height: 48px; border: 1px solid rgba(244,201,107,.28); border-radius: 11px; color: #f8df9d; background: linear-gradient(145deg, rgba(244,201,107,.12), rgba(244,201,107,.035)); box-shadow: inset 0 1px rgba(255,255,255,.06), 0 0 18px rgba(244,201,107,.07); font: 600 1.08rem var(--serif); letter-spacing: .08em; }
+    .modal-actions { display: grid; grid-template-columns: 1fr; gap: 9px; }
     .modal-actions .primary, .modal-actions .secondary { min-height: 45px; padding: 0 12px; font-size: .84rem; text-decoration: none; }
     .copy-feedback { min-height: 18px; margin-top: 10px; color: #a4d2b5; font-size: .73rem; }
     .confetti { position: fixed; z-index: 11; top: -12px; width: 7px; height: 12px; border-radius: 2px; pointer-events: none; animation: fall 2.8s linear forwards; }
@@ -177,7 +175,7 @@
         Drag tiles to reorder · tap a tile to preview its sound
       </p>
     </section>
-    <footer class="footer"><span>Listen for the shape of the melody</span><i class="footer-dot"></i><span>Follow the coordinates</span></footer>
+    <footer class="footer"><span>Listen for the shape of the melody</span><i class="footer-dot"></i><span>Follow the numbers</span></footer>
   </main>
 
   <div class="modal-backdrop" id="victory" role="dialog" aria-modal="true" aria-labelledby="victory-title" aria-hidden="true">
@@ -187,13 +185,9 @@
       <div class="modal-kicker">The melody remembers</div>
       <h2 id="victory-title">You found it</h2>
       <p class="modal-message" id="victory-message"></p>
-      <div class="coordinates">
-        <div class="coordinate-line"><span>Latitude</span><strong id="latitude-value"></strong></div>
-        <div class="coordinate-line"><span>Longitude</span><strong id="longitude-value"></strong></div>
-      </div>
+      <div class="secret-sequence" id="secret-sequence" aria-label="Unlocked sequence"></div>
       <div class="modal-actions">
-        <button class="secondary" id="copy-button" type="button">Copy coordinates</button>
-        <a class="primary" id="maps-link" target="_blank" rel="noopener noreferrer">Open in Google Maps</a>
+        <button class="primary" id="copy-button" type="button">Copy Sequence</button>
       </div>
       <div class="copy-feedback" id="copy-feedback" aria-live="polite"></div>
     </section>
@@ -203,19 +197,16 @@
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
   <script>
     // ─────────────────────────────────────────────────────────────
-    // CONFIG — personalize the destination and the victory message.
-    // Four two-digit pairs make each coordinate: 41 + 89 + 02 + 10
-    // becomes 41.890210. The first pair is the degrees.
+    // CONFIG — customize the eight hidden sequence pairs and score images.
     // ─────────────────────────────────────────────────────────────
     const CONFIG = {
-      LATITUDE_PAIRS: ["41", "79", "49", "52"],
-      LONGITUDE_PAIRS: ["13", "22", "09", "03"],
+      SECRET_PAIRS: ["41", "79", "49", "52", "13", "22", "09", "03"],
       IMAGE_PATHS: [
         "./bar1.png", "./bar2.png", "./bar3.png", "./bar4.png",
         "./bar5.png", "./bar6.png", "./bar7.png", "./bar8.png"
       ],
       HIDE_NUMBERS_UNTIL_SOLVED: false,
-      VICTORY_MESSAGE: "You put the music back together. Your next little adventure is waiting here."
+      VICTORY_MESSAGE: "Armonia ricomposta. Ecco la sequenza."
     };
 
     // The printed score's dotted-quarter = 54 is represented on this
@@ -223,9 +214,7 @@
     const BPM = 81;
     const BEATS_PER_BAR = 4;
     const BAR_SECONDS = (60 / BPM) * BEATS_PER_BAR;
-    const LATITUDE = `${CONFIG.LATITUDE_PAIRS[0]}.${CONFIG.LATITUDE_PAIRS.slice(1).join("")}`;
-    const LONGITUDE = `${CONFIG.LONGITUDE_PAIRS[0]}.${CONFIG.LONGITUDE_PAIRS.slice(1).join("")}`;
-    const pairForMeasure = (id) => [...CONFIG.LATITUDE_PAIRS, ...CONFIG.LONGITUDE_PAIRS][id - 1];
+    const pairForMeasure = (id) => CONFIG.SECRET_PAIRS[id - 1];
 
     // Each section specifies its bass octave and one three-note broken-chord
     // shape. Triplets are generated at the same timing within each beat.
@@ -273,7 +262,10 @@
     const stopButton = document.getElementById("stop-button");
     const victory = document.getElementById("victory");
     let synth = null;
-    let reverb = null;
+    let compressor = null;
+    let toneGain = null;
+    let limiter = null;
+    let filter = null;
     let audioReady = false;
     let audioInitPromise = null;
     let playing = false;
@@ -289,7 +281,7 @@
       const safeImagePath = measure.imagePath.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
       return `<button class="tile" type="button" role="listitem" data-id="${measure.id}" aria-label="Musical score tile. Tap to preview or drag to reorder.">
         <span class="image-frame"><img class="measure-image" src="${safeImagePath}" alt="Sheet music excerpt" draggable="false"><span class="image-fallback" aria-hidden="true" hidden></span></span>
-        <span class="tile-bottom"><span class="coord-pair ${pairHidden ? "hidden" : ""}" aria-label="Coordinate pair">${pairHidden ? "••" : measure.coordPair}</span></span>
+        <span class="tile-bottom"><span class="coord-pair ${pairHidden ? "hidden" : ""}" aria-label="Secret pair">${pairHidden ? "••" : measure.coordPair}</span></span>
       </button>`;
     }
 
@@ -334,18 +326,20 @@
         if (!audioReady) {
           if (!audioInitPromise) {
             audioInitPromise = (async () => {
-              reverb = new Tone.Reverb({ decay: 2.4, wet: .24 });
-              await reverb.ready;
               synth = new Tone.PolySynth(Tone.Synth, {
                 maxPolyphony: 24,
                 options: {
-                  oscillator: { type: "triangle" },
-                  envelope: { attack: .018, decay: .28, sustain: .23, release: 1.15 }
+                  oscillator: { type: "fatsawtooth", count: 3, spread: 10 },
+                  envelope: { attack: .025, decay: .34, sustain: .3, release: 1.05 }
                 }
               });
-              synth.volume.value = -7;
-              synth.connect(reverb);
-              reverb.toDestination();
+              filter = new Tone.Filter({ frequency: 3600, type: "lowpass", rolloff: -12 });
+              compressor = new Tone.Compressor({ threshold: -24, ratio: 4, attack: .006, release: .24 });
+              toneGain = new Tone.Gain(1.35);
+              limiter = new Tone.Limiter(-1);
+              synth.volume.value = 6;
+              Tone.Destination.volume.value = 0;
+              synth.chain(filter, compressor, toneGain, limiter, Tone.Destination);
               audioReady = true;
             })();
           }
@@ -363,12 +357,12 @@
       board.querySelectorAll(".tile").forEach((tile) => tile.classList.toggle("is-playing", Number(tile.dataset.id) === id));
     }
     function clearHighlight() { board.querySelectorAll(".tile").forEach((tile) => tile.classList.remove("is-playing")); }
-    function scheduleMeasure(measure, startTime, velocity = .52) {
+    function scheduleMeasure(measure, startTime, velocity = .96) {
       const secondsPerBeat = 60 / BPM;
       for (const event of measure.notes) {
         const delay = Math.max(0, (startTime - Tone.now()) * 1000 + event.at * secondsPerBeat * 1000);
         const duration = Math.max(.08, event.beats * secondsPerBeat);
-        const level = event.kind === "bass" ? velocity * .72 : event.kind === "melody" ? velocity * .9 : velocity * .5;
+        const level = event.kind === "bass" ? velocity * .92 : event.kind === "melody" ? velocity : velocity * .84;
         noteTimers.push(window.setTimeout(() => {
           if (synth) synth.triggerAttackRelease(event.pitches, duration, Tone.now(), level);
         }, delay));
@@ -399,7 +393,7 @@
         const measure = measures[id - 1];
         clearNoteTimers();
         const startTime = Tone.now() + .06;
-        scheduleMeasure(measure, startTime, victoryRun ? .58 : .5);
+        scheduleMeasure(measure, startTime, victoryRun ? .98 : .94);
         statusLine.innerHTML = `Playing <strong>slot ${index + 1}</strong>`;
         const waitMs = BAR_SECONDS * 1000;
         await sleep(waitMs);
@@ -410,7 +404,7 @@
       playing = false;
       playButton.disabled = false;
       stopButton.disabled = true;
-      statusLine.textContent = victoryRun ? "The opening phrase is yours. Your coordinates are ready." : "Sequence complete. Tap any measure to hear it on its own.";
+      statusLine.textContent = victoryRun ? "The opening phrase is yours. The sequence is yours to keep." : "Sequence complete. Tap any measure to hear it on its own.";
       if (isSolvedOrder(currentOrder())) checkWin(false);
     }
 
@@ -439,7 +433,7 @@
       const token = ++playToken;
       highlightMeasure(id);
       statusLine.innerHTML = `Previewing <strong>slot ${slot}</strong>`;
-      scheduleMeasure(measures[id - 1], Tone.now() + .06, .46);
+      scheduleMeasure(measures[id - 1], Tone.now() + .06, .9);
       previewTimer = window.setTimeout(() => {
         if (token !== playToken || playing) return;
         previewTimer = null;
@@ -464,10 +458,13 @@
 
     function openVictory() {
       document.getElementById("victory-message").textContent = CONFIG.VICTORY_MESSAGE;
-      document.getElementById("latitude-value").textContent = LATITUDE;
-      document.getElementById("longitude-value").textContent = LONGITUDE;
-      const destination = `${LATITUDE}, ${LONGITUDE}`;
-      document.getElementById("maps-link").href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(destination)}`;
+      const sequence = document.getElementById("secret-sequence");
+      sequence.replaceChildren(...CONFIG.SECRET_PAIRS.map((pair) => {
+        const item = document.createElement("span");
+        item.className = "sequence-pair";
+        item.textContent = pair;
+        return item;
+      }));
       victory.classList.add("open");
       victory.setAttribute("aria-hidden", "false");
       document.getElementById("close-modal").focus();
@@ -513,11 +510,11 @@
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && victory.classList.contains("open")) closeVictory(); });
     document.getElementById("copy-button").addEventListener("click", async (event) => {
       const button = event.currentTarget;
-      const copyText = `${LATITUDE}, ${LONGITUDE}`;
+      const copyText = CONFIG.SECRET_PAIRS.join(" ");
       const feedback = document.getElementById("copy-feedback");
       try {
         await navigator.clipboard.writeText(copyText);
-        feedback.textContent = "Coordinates copied to clipboard.";
+        feedback.textContent = "Sequence copied to clipboard.";
       } catch (error) {
         const area = document.createElement("textarea");
         area.value = copyText;
@@ -528,10 +525,10 @@
         area.select();
         const copied = document.execCommand("copy");
         area.remove();
-        feedback.textContent = copied ? "Coordinates copied to clipboard." : copyText;
+        feedback.textContent = copied ? "Sequence copied to clipboard." : copyText;
       }
       button.textContent = "Copied";
-      window.setTimeout(() => { button.textContent = "Copy coordinates"; }, 1600);
+      window.setTimeout(() => { button.textContent = "Copy Sequence"; }, 1600);
     });
 
     renderBoard(shuffledOrder());
